@@ -91,6 +91,16 @@ function getRecord(c){
   return (overall && overall.summary) || null;
 }
 
+// ESPN's scoreboard endpoint returns competitor.score as a plain string,
+// but the team-schedule endpoint returns it as an object like
+// { value, displayValue }. Handle both so neither view ever prints
+// "[object Object]".
+function scoreText(score){
+  if(score == null) return "";
+  if(typeof score === "object") return score.displayValue ?? score.value ?? "";
+  return String(score);
+}
+
 function extractTeam(c){
   if(!c) return { displayName:"TBD", location:"", abbreviation:"", logo:"", score:null, winner:false, rank:null, record:null };
   const t = c.team || {};
@@ -100,7 +110,7 @@ function extractTeam(c){
     displayName: t.displayName || (t.location ? `${t.location} ${t.name || ""}`.trim() : (t.name || "Team")),
     abbreviation: t.abbreviation || "",
     logo: t.logo || (t.logos && t.logos[0] && t.logos[0].href) || "",
-    score: c.score !== undefined ? c.score : null,
+    score: c.score !== undefined ? scoreText(c.score) : null,
     winner: !!c.winner,
     rank: getRank(c),
     record: getRecord(c),
@@ -525,12 +535,12 @@ function renderScheduleHTML(data, teamId){
       if(us && us.winner){ wins++; resultTag = `<span class="res win">W</span>`; }
       else if(opp && opp.winner){ losses++; resultTag = `<span class="res loss">L</span>`; }
       else { ties++; }
-      const usScore = us ? us.score : "";
-      const oppScore = opp ? opp.score : "";
+      const usScore = us ? scoreText(us.score) : "";
+      const oppScore = opp ? scoreText(opp.score) : "";
       return `<div class="sched-row">
         <span class="sched-date">${escapeHTML(formatShortDate(evt.date))}</span>
         <span class="sched-opp">${atVs} ${escapeHTML(oppName)}</span>
-        <span class="sched-score">${resultTag}<span>${escapeHTML(String(usScore))}-${escapeHTML(String(oppScore))}</span></span>
+        <span class="sched-score">${resultTag}<span>${escapeHTML(usScore)}-${escapeHTML(oppScore)}</span></span>
       </div>`;
     }
     const timePart = formatLocalTime(evt.date).split("\u00b7")[1] || "";

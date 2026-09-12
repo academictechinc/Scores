@@ -1,7 +1,7 @@
 // Bump CACHE_NAME on every release. Users must fully close and reopen the
 // app to pick up a new version (same pattern as the rest of the field-tools
 // suite / Logbook / Weather).
-const CACHE_NAME = "scores-v9";
+const CACHE_NAME = "scores-v11";
 const SHELL = ["./index.html", "./manifest.json", "./icon-192.png", "./icon-512.png"];
 
 self.addEventListener("install", (event) => {
