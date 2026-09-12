@@ -101,6 +101,15 @@ function extractTeam(c){
   };
 }
 
+function extractOdds(comp){
+  const o = comp.odds && comp.odds[0];
+  if(!o) return null;
+  const details = o.details || "";
+  const overUnder = o.overUnder;
+  if(!details && !overUnder) return null;
+  return { details, overUnder };
+}
+
 function normalizeEvent(evt, sportKey){
   const comp = (evt.competitions && evt.competitions[0]) || {};
   const competitors = comp.competitors || [];
@@ -115,6 +124,7 @@ function normalizeEvent(evt, sportKey){
     statusDetail: statusType.shortDetail || statusType.detail || "",
     home: extractTeam(home),
     away: extractTeam(away),
+    odds: extractOdds(comp),
     __sportKey: sportKey,
   };
 }
@@ -234,11 +244,21 @@ function teamRowHTML(team, e){
   </div>`;
 }
 
+function oddsLineHTML(e){
+  if(!e.odds) return "";
+  const parts = [];
+  if(e.odds.details) parts.push(e.odds.details);
+  if(e.odds.overUnder) parts.push(`O/U ${e.odds.overUnder}`);
+  if(!parts.length) return "";
+  return `<div class="odds-line">${escapeHTML(parts.join(" \u00b7 "))}</div>`;
+}
+
 function cardHTML(e, opts = {}){
   const pinnedClass = opts.pinned ? " pinned" : "";
   const liveClass = e.state === "in" ? " live" : "";
   return `<div class="card${pinnedClass}" onclick="openGame('${e.__sportKey}','${e.id}')">
     <div class="card-top"><span class="card-tag${liveClass}">${statusLine(e)}</span></div>
+    ${oddsLineHTML(e)}
     ${teamRowHTML(e.away, e)}
     ${teamRowHTML(e.home, e)}
   </div>`;
@@ -372,15 +392,23 @@ function modalOpen(){
 
 /* --------------------------------- modal --------------------------------- */
 
+function teamNameHTML(team, sportKey){
+  const label = escapeHTML(team.abbreviation || team.displayName);
+  if(!team.id) return `<span class="n">${label}</span>`;
+  return `<span class="n clickable" onclick="openTeamSchedule('${sportKey}','${team.id}')">${label}</span>`;
+}
+
 function modalSkeleton(e){
   return `
     <h2>${escapeHTML(e.away.displayName)} at ${escapeHTML(e.home.displayName)}</h2>
     <div class="sub">${statusLine(e)}</div>
+    ${oddsLineHTML(e)}
     <div class="modal-score-row">
-      <div class="modal-team">${e.away.logo ? `<img src="${e.away.logo}" alt="">` : ""}<span class="n">${escapeHTML(e.away.abbreviation || e.away.displayName)}</span></div>
+      <div class="modal-team">${e.away.logo ? `<img src="${e.away.logo}" alt="">` : ""}${teamNameHTML(e.away, e.__sportKey)}</div>
       <div class="modal-score">${e.away.score ?? "\u2013"} &ndash; ${e.home.score ?? "\u2013"}</div>
-      <div class="modal-team"><span class="n">${escapeHTML(e.home.abbreviation || e.home.displayName)}</span>${e.home.logo ? `<img src="${e.home.logo}" alt="">` : ""}</div>
+      <div class="modal-team">${teamNameHTML(e.home, e.__sportKey)}${e.home.logo ? `<img src="${e.home.logo}" alt="">` : ""}</div>
     </div>
+    <div class="tap-hint">Tap a team name for their season schedule</div>
     <div id="live-block"></div>
     <div class="modal-block"><h3>News</h3><div id="news-block" class="loading-line">Looking for stories\u2026</div></div>
     <div class="modal-block"><h3>Highlights</h3><div id="clips-block" class="loading-line">Looking for clips\u2026</div></div>
@@ -404,6 +432,82 @@ function closeModal(){
   document.getElementById("modal-overlay").classList.add("hidden");
   stopLivePolling();
   state.activeGame = null;
+}
+
+/* ----------------------------- team schedule ------------------------------ */
+
+function formatShortDate(iso){
+  return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+function renderScheduleHTML(data, teamId){
+  const teamName = (data.team && data.team.displayName) || "Team";
+  const events = (data.events || []).slice().sort((a, b) => new Date(a.date) - new Date(b.date));
+
+  let wins = 0, losses = 0, ties = 0;
+  const rows = events.map((evt) => {
+    const comp = (evt.competitions && evt.competitions[0]) || {};
+    const competitors = comp.competitors || [];
+    const us = competitors.find((c) => c.team && String(c.team.id) === String(teamId));
+    const opp = competitors.find((c) => c !== us) || {};
+    const statusType = (comp.status && comp.status.type) || {};
+    const completed = !!statusType.completed;
+    const oppTeam = opp.team || {};
+    const oppName = oppTeam.displayName || oppTeam.name || "TBD";
+    const atVs = us && us.homeAway === "away" ? "@" : "vs";
+
+    if(completed){
+      let resultTag = `<span class="res tie">T</span>`;
+      if(us && us.winner){ wins++; resultTag = `<span class="res win">W</span>`; }
+      else if(opp && opp.winner){ losses++; resultTag = `<span class="res loss">L</span>`; }
+      else { ties++; }
+      const usScore = us ? us.score : "";
+      const oppScore = opp ? opp.score : "";
+      return `<div class="sched-row">
+        <span class="sched-date">${escapeHTML(formatShortDate(evt.date))}</span>
+        <span class="sched-opp">${atVs} ${escapeHTML(oppName)}</span>
+        <span class="sched-score">${resultTag}<span>${escapeHTML(String(usScore))}-${escapeHTML(String(oppScore))}</span></span>
+      </div>`;
+    }
+    const timePart = formatLocalTime(evt.date).split("\u00b7")[1] || "";
+    return `<div class="sched-row">
+      <span class="sched-date">${escapeHTML(formatShortDate(evt.date))}</span>
+      <span class="sched-opp">${atVs} ${escapeHTML(oppName)}</span>
+      <span class="sched-score muted">${escapeHTML(timePart.trim())}</span>
+    </div>`;
+  }).join("");
+
+  const record = `${wins}-${losses}${ties ? "-" + ties : ""}`;
+  return `
+    <button class="back-link" onclick="returnToGame()">&lsaquo; Back to game</button>
+    <h2 style="margin-top:14px;">${escapeHTML(teamName)}</h2>
+    <div class="sub">${escapeHTML(record)} this season</div>
+    <div class="modal-block">${rows || '<div class="loading-line">No schedule found.</div>'}</div>
+  `;
+}
+
+async function openTeamSchedule(sportKey, teamId){
+  const conf = SPORTS[sportKey];
+  const overlay = document.getElementById("modal-overlay");
+  const body = document.getElementById("modal-body");
+  stopLivePolling();
+  overlay.classList.remove("hidden");
+  body.innerHTML = `<button class="back-link" onclick="returnToGame()">&lsaquo; Back to game</button><div class="loading-line" style="margin-top:14px;">Loading schedule\u2026</div>`;
+  try{
+    const data = await fetchJSON(`${ESPN_BASE}/${conf.sport}/${conf.league}/teams/${teamId}/schedule`);
+    body.innerHTML = renderScheduleHTML(data, teamId);
+  } catch(err){
+    console.error("schedule fetch failed", err);
+    body.innerHTML = `<button class="back-link" onclick="returnToGame()">&lsaquo; Back to game</button><div class="empty-state">Couldn't load the schedule.</div>`;
+  }
+}
+
+function returnToGame(){
+  if(state.activeGame){
+    openGame(state.activeGame.sportKey, state.activeGame.id);
+  } else {
+    closeModal();
+  }
 }
 
 async function loadGameExtras(sportKey, e){
