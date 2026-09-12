@@ -85,8 +85,14 @@ function getRank(c){
   return null;
 }
 
+function getRecord(c){
+  if(!c.records || !c.records.length) return null;
+  const overall = c.records.find((r) => r.name === "overall" || r.type === "total") || c.records[0];
+  return (overall && overall.summary) || null;
+}
+
 function extractTeam(c){
-  if(!c) return { displayName:"TBD", location:"", abbreviation:"", logo:"", score:null, winner:false, rank:null };
+  if(!c) return { displayName:"TBD", location:"", abbreviation:"", logo:"", score:null, winner:false, rank:null, record:null };
   const t = c.team || {};
   return {
     id: t.id,
@@ -97,6 +103,7 @@ function extractTeam(c){
     score: c.score !== undefined ? c.score : null,
     winner: !!c.winner,
     rank: getRank(c),
+    record: getRecord(c),
     homeAway: c.homeAway,
   };
 }
@@ -108,6 +115,36 @@ function extractOdds(comp){
   const overUnder = o.overUnder;
   if(!details && !overUnder) return null;
   return { details, overUnder };
+}
+
+// Conservative list of networks generally carried on YouTube TV's base
+// plan. Regional sports networks and market-by-market carriage aren't
+// reliably knowable from this data, so this errs toward only flagging
+// widely-carried national networks.
+const YOUTUBE_TV_CHANNELS = new Set([
+  "ABC","CBS","NBC","FOX","ESPN","ESPN2","ESPNU","ESPNEWS","FS1","FS2",
+  "TBS","TNT","TRUTV","NFL NETWORK","NFLN","NBA TV","MLB NETWORK","MLBN",
+  "BIG TEN NETWORK","BTN","SEC NETWORK","SECN","ACC NETWORK","ACCN",
+  "CBS SPORTS NETWORK","GOLF CHANNEL","PAC-12 NETWORK",
+]);
+
+function extractBroadcast(comp){
+  if(comp.broadcasts && comp.broadcasts.length){
+    const names = comp.broadcasts.flatMap((b) => b.names || []).filter(Boolean);
+    if(names.length) return [...new Set(names)].join(", ");
+  }
+  if(comp.geoBroadcasts && comp.geoBroadcasts.length){
+    const names = comp.geoBroadcasts.map((b) => b.media && b.media.shortName).filter(Boolean);
+    if(names.length) return [...new Set(names)].join(", ");
+  }
+  if(typeof comp.broadcast === "string" && comp.broadcast) return comp.broadcast;
+  return null;
+}
+
+function isOnYouTubeTV(broadcastStr){
+  if(!broadcastStr) return false;
+  const tokens = broadcastStr.split(/[,/]/).map((s) => s.trim().toUpperCase()).filter(Boolean);
+  return tokens.some((t) => YOUTUBE_TV_CHANNELS.has(t));
 }
 
 function normalizeEvent(evt, sportKey){
@@ -125,6 +162,7 @@ function normalizeEvent(evt, sportKey){
     home: extractTeam(home),
     away: extractTeam(away),
     odds: extractOdds(comp),
+    broadcast: extractBroadcast(comp),
     __sportKey: sportKey,
   };
 }
@@ -233,13 +271,14 @@ function statusLine(e){
 function teamRowHTML(team, e){
   const outcome = e.completed ? (team.winner ? "winner" : "loser") : "";
   const rank = team.rank ? `<span class="team-rank">#${team.rank}</span>` : "";
+  const record = team.record ? `<span class="team-record">${escapeHTML(team.record)}</span>` : "";
   const showScore = e.state !== "pre";
   const score = showScore ? `<span class="team-score">${team.score ?? "-"}</span>` : "";
   const logo = team.logo
     ? `<img class="team-logo" src="${team.logo}" alt="" onerror="this.style.visibility='hidden'">`
     : `<span class="team-logo"></span>`;
   return `<div class="team-row ${outcome}">
-    <div class="team-left">${logo}${rank}<span class="team-name">${escapeHTML(team.displayName)}</span></div>
+    <div class="team-left">${logo}${rank}<span class="team-name">${escapeHTML(team.displayName)}</span>${record}</div>
     ${score}
   </div>`;
 }
@@ -392,6 +431,15 @@ function modalOpen(){
 
 /* --------------------------------- modal --------------------------------- */
 
+function broadcastHTML(e){
+  if(!e.broadcast) return "";
+  const onYTTV = isOnYouTubeTV(e.broadcast);
+  const link = onYTTV
+    ? ` &middot; <a href="https://tv.youtube.com/" target="_blank" rel="noopener" class="yttv-link">Watch on YouTube TV</a>`
+    : "";
+  return `<div class="broadcast-line">\u{1F4FA} ${escapeHTML(e.broadcast)}${link}</div>`;
+}
+
 function teamNameHTML(team, sportKey){
   const label = escapeHTML(team.abbreviation || team.displayName);
   if(!team.id) return `<span class="n">${label}</span>`;
@@ -403,6 +451,7 @@ function modalSkeleton(e){
     <h2>${escapeHTML(e.away.displayName)} at ${escapeHTML(e.home.displayName)}</h2>
     <div class="sub">${statusLine(e)}</div>
     ${oddsLineHTML(e)}
+    ${broadcastHTML(e)}
     <div class="modal-score-row">
       <div class="modal-team">${e.away.logo ? `<img src="${e.away.logo}" alt="">` : ""}${teamNameHTML(e.away, e.__sportKey)}</div>
       <div class="modal-score">${e.away.score ?? "\u2013"} &ndash; ${e.home.score ?? "\u2013"}</div>
