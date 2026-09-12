@@ -431,12 +431,27 @@ function modalOpen(){
 
 /* --------------------------------- modal --------------------------------- */
 
+// Android supports launching an installed app directly via an intent://
+// URL with a package fallback to the web URL if the app isn't installed.
+// iOS has no publicly documented custom URL scheme for YouTube TV, so we
+// fall back to the plain https link there and rely on iOS's own Universal
+// Link resolution to hand off to the app when it's installed.
+const YTTV_WEB_URL = "https://tv.youtube.com/";
+const YTTV_ANDROID_INTENT = "intent://tv.youtube.com/#Intent;scheme=https;package=com.google.android.apps.youtube.unplugged;S.browser_fallback_url=" + encodeURIComponent(YTTV_WEB_URL) + ";end";
+
+function isAndroidDevice(){
+  return /Android/i.test(navigator.userAgent || "");
+}
+
 function broadcastHTML(e){
   if(!e.broadcast) return "";
   const onYTTV = isOnYouTubeTV(e.broadcast);
-  const link = onYTTV
-    ? ` &middot; <a href="https://tv.youtube.com/" target="_blank" rel="noopener" class="yttv-link">Watch on YouTube TV</a>`
-    : "";
+  let link = "";
+  if(onYTTV){
+    link = isAndroidDevice()
+      ? ` &middot; <a href="${YTTV_ANDROID_INTENT}" class="yttv-link">Watch on YouTube TV</a>`
+      : ` &middot; <a href="${YTTV_WEB_URL}" target="_blank" rel="noopener" class="yttv-link">Watch on YouTube TV</a>`;
+  }
   return `<div class="broadcast-line">\u{1F4FA} ${escapeHTML(e.broadcast)}${link}</div>`;
 }
 
