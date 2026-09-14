@@ -56,6 +56,11 @@
   }
   #refresh-btn.spinning svg{animation:spin .7s linear infinite;}
   @keyframes spin{to{transform:rotate(360deg);}}
+  #settings-btn{
+    background:none; border:1px solid var(--border); color:var(--fg-dim);
+    width:32px; height:32px; border-radius:8px; display:flex; align-items:center; justify-content:center;
+    cursor:pointer;
+  }
 
   nav.tabs{
     display:flex; gap:6px; overflow-x:auto; padding-bottom:10px;
@@ -185,6 +190,22 @@
   .res.loss{background:var(--red); color:#1a0d0c;}
   .res.tie{background:var(--fg-dim); color:#12141a;}
 
+  .settings-section{margin-bottom:18px;}
+  .settings-section h3{font-size:.85rem; font-weight:600; margin:0 0 8px 0;}
+  .settings-row{display:flex; gap:8px; margin-bottom:8px;}
+  .settings-row input, .settings-row select{
+    flex:1; min-width:0; background:var(--bg-raised); border:1px solid var(--border); color:var(--fg);
+    padding:8px 10px; border-radius:8px; font-family:var(--font-display); font-size:.85rem;
+  }
+  .settings-hint{font-size:.72rem; color:var(--fg-dim); margin:-4px 0 10px 0;}
+  #settings-save{
+    width:100%; background:var(--teal); color:#0c1210; border:none; border-radius:9px;
+    padding:11px; font-family:var(--font-display); font-weight:700; font-size:.9rem; cursor:pointer; margin-top:6px;
+  }
+  #settings-saved-note{
+    text-align:center; font-size:.78rem; color:var(--teal); font-family:var(--font-mono); margin-top:8px; height:16px;
+  }
+
   footer{text-align:center; color:var(--fg-dim); font-size:.68rem; padding:20px 16px 30px 16px; font-family:var(--font-mono);}
 </style>
 </head>
@@ -195,6 +216,9 @@
     <div class="brand"><span class="tick"></span><h1>Scores</h1></div>
     <div style="display:flex; align-items:center; gap:10px;">
       <span class="meta-time" id="updated-at">--</span>
+      <button id="settings-btn" title="Favorites" onclick="openSettings()">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      </button>
       <button id="refresh-btn" title="Refresh" onclick="manualRefresh()">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
       </button>
@@ -218,6 +242,14 @@
     <div class="modal-handle"></div>
     <button class="modal-close" onclick="closeModal()">&times;</button>
     <div id="modal-body"></div>
+  </div>
+</div>
+
+<div class="modal-overlay hidden" id="settings-overlay" onclick="if(event.target===this) closeSettings()">
+  <div class="modal">
+    <div class="modal-handle"></div>
+    <button class="modal-close" onclick="closeSettings()">&times;</button>
+    <div id="settings-body"></div>
   </div>
 </div>
 

@@ -8,11 +8,11 @@
 const ESPN_BASE = "https://site.api.espn.com/apis/site/v2/sports";
 
 const SPORTS = {
-  cfb:  { key:"cfb",  label:"College Football",   sport:"football",  league:"college-football",        college:true,  scoreboardParams:"?groups=80&limit=400", priorityTeam:"Mississippi State" },
-  cbb:  { key:"cbb",  label:"College Basketball",  sport:"basketball", league:"mens-college-basketball", college:true,  scoreboardParams:"?groups=50&limit=400", priorityTeam:"Mississippi State" },
-  cbsb: { key:"cbsb", label:"College Baseball",    sport:"baseball",  league:"college-baseball",        college:true,  scoreboardParams:"?limit=400",           priorityTeam:"Mississippi State" },
-  nfl:  { key:"nfl",  label:"NFL",                 sport:"football",  league:"nfl",                    college:false, scoreboardParams:"",                     priorityTeams:["Saints","Cowboys"] },
-  mlb:  { key:"mlb",  label:"MLB",                 sport:"baseball",  league:"mlb",                    college:false, scoreboardParams:"",                     priorityTeams:["Pirates","Dodgers"] },
+  cfb:  { key:"cfb",  label:"College Football",   sport:"football",  league:"college-football",        college:true,  scoreboardParams:"?groups=80&limit=400" },
+  cbb:  { key:"cbb",  label:"College Basketball",  sport:"basketball", league:"mens-college-basketball", college:true,  scoreboardParams:"?groups=50&limit=400" },
+  cbsb: { key:"cbsb", label:"College Baseball",    sport:"baseball",  league:"college-baseball",        college:true,  scoreboardParams:"?limit=400" },
+  nfl:  { key:"nfl",  label:"NFL",                 sport:"football",  league:"nfl",                    college:false, scoreboardParams:"" },
+  mlb:  { key:"mlb",  label:"MLB",                 sport:"baseball",  league:"mlb",                    college:false, scoreboardParams:"" },
 };
 
 // Conference rosters reflect the 2024-25 realignment as best known. Used
@@ -30,6 +30,45 @@ const CONFERENCES = {
   "Conference USA": ["Delaware","Missouri State","Jacksonville State","Kennesaw State","Liberty","Louisiana Tech","Middle Tennessee","New Mexico State","Sam Houston","UTEP","Western Kentucky"],
   "Sun Belt": ["Appalachian State","Arkansas State","Coastal Carolina","Georgia Southern","Georgia State","James Madison","Louisiana","Louisiana Monroe","Marshall","Old Dominion","South Alabama","Southern Miss","Texas State","Troy"],
 };
+
+// Favorite teams (2 per sport) and a favorite conference (applied across
+// the 3 college tabs), persisted locally so they survive app restarts.
+const PREFS_KEY = "scores_prefs_v1";
+const DEFAULT_PREFS = {
+  conference: "SEC",
+  teams: {
+    cfb: ["Mississippi State", ""],
+    cbb: ["Mississippi State", ""],
+    cbsb: ["Mississippi State", ""],
+    nfl: ["Saints", "Cowboys"],
+    mlb: ["Pirates", "Dodgers"],
+  },
+};
+
+function loadPrefs(){
+  try{
+    const raw = localStorage.getItem(PREFS_KEY);
+    if(!raw) return JSON.parse(JSON.stringify(DEFAULT_PREFS));
+    const parsed = JSON.parse(raw);
+    return {
+      conference: parsed.conference || DEFAULT_PREFS.conference,
+      teams: Object.assign({}, DEFAULT_PREFS.teams, parsed.teams || {}),
+    };
+  } catch(err){
+    console.error("Failed to load prefs, using defaults", err);
+    return JSON.parse(JSON.stringify(DEFAULT_PREFS));
+  }
+}
+
+function savePrefs(){
+  try{
+    localStorage.setItem(PREFS_KEY, JSON.stringify(prefs));
+  } catch(err){
+    console.error("Failed to save prefs", err);
+  }
+}
+
+let prefs = loadPrefs();
 
 const state = { currentTab: null, query: "", cache: {}, activeGame: null };
 let livePollTimer = null;
@@ -213,47 +252,54 @@ function bothRanked(e){ return !!(e.home.rank && e.away.rank); }
 function oneRanked(e){ return !!(e.home.rank || e.away.rank) && !bothRanked(e); }
 function isConf(e, name){ return getConference(e.home.location) === name || getConference(e.away.location) === name; }
 
-function buildCollegeSections(events, conf){
-  const priority = conf.priorityTeam.toLowerCase();
-  let msuGame = null;
-  const rest = [];
-  events.forEach((e) => {
-    const isMsu = e.home.displayName.toLowerCase().includes(priority) || e.away.displayName.toLowerCase().includes(priority);
-    if(isMsu && !msuGame) msuGame = e; else rest.push(e);
+// Matches up to N favorite-team slots against the event list. Each slot
+// becomes either a found game (consumed so it isn't double-counted) or a
+// "no game" placeholder, in the order the teams are configured.
+function buildFavoritePins(events, favNamesRaw){
+  const favs = (favNamesRaw || []).map((n) => (n || "").trim()).filter(Boolean);
+  const usedIds = new Set();
+  const pins = favs.map((raw) => {
+    const needle = raw.toLowerCase();
+    const match = events.find((e) => !usedIds.has(e.id) &&
+      (e.home.displayName.toLowerCase().includes(needle) || e.away.displayName.toLowerCase().includes(needle)));
+    if(match){ usedIds.add(match.id); return { game: match, label: raw }; }
+    return { game: null, label: raw };
   });
+  return { pins, usedIds };
+}
 
-  const secGames = rest.filter((e) => isConf(e, "SEC"));
-  const nonSec = rest.filter((e) => !isConf(e, "SEC"));
+function buildCollegeSections(events, sportKey){
+  const favConf = prefs.conference;
+  const { pins, usedIds } = buildFavoritePins(events, prefs.teams[sportKey]);
+  const rest = events.filter((e) => !usedIds.has(e.id));
 
-  secGames.sort((a, b) => {
+  const confGames = rest.filter((e) => isConf(e, favConf));
+  const nonConf = rest.filter((e) => !isConf(e, favConf));
+
+  confGames.sort((a, b) => {
     const pa = bothRanked(a) ? 0 : oneRanked(a) ? 1 : 2;
     const pb = bothRanked(b) ? 0 : oneRanked(b) ? 1 : 2;
     return pa !== pb ? pa - pb : rankScore(a) - rankScore(b);
   });
 
-  const rankedNonSec = nonSec.filter((e) => e.home.rank || e.away.rank);
-  rankedNonSec.sort((a, b) => {
+  const rankedNonConf = nonConf.filter((e) => e.home.rank || e.away.rank);
+  rankedNonConf.sort((a, b) => {
     const pa = bothRanked(a) ? 0 : 1;
     const pb = bothRanked(b) ? 0 : 1;
     return pa !== pb ? pa - pb : rankScore(a) - rankScore(b);
   });
 
-  const others = nonSec.filter((e) => !(e.home.rank || e.away.rank));
+  const others = nonConf.filter((e) => !(e.home.rank || e.away.rank));
   others.sort((a, b) => new Date(a.date) - new Date(b.date));
 
-  return { msuGame, secGames, rankedNonSec, others, priorityLabel: conf.priorityTeam };
+  return { pins, confGames, rankedNonConf, others, favConf };
 }
 
-function buildProSections(events, conf){
-  const names = conf.priorityTeams.map((n) => n.toLowerCase());
-  const pinned = [];
-  const rest = [];
-  events.forEach((e) => {
-    const match = names.some((n) => e.home.displayName.toLowerCase().includes(n) || e.away.displayName.toLowerCase().includes(n));
-    if(match) pinned.push(e); else rest.push(e);
-  });
+function buildProSections(events, sportKey){
+  const { pins, usedIds } = buildFavoritePins(events, prefs.teams[sportKey]);
+  const rest = events.filter((e) => !usedIds.has(e.id));
   rest.sort((a, b) => new Date(a.date) - new Date(b.date));
-  return { pinned, rest };
+  return { pins, rest };
 }
 
 function matchesSearch(e, q){
@@ -313,20 +359,27 @@ function cardHTML(e, opts = {}){
   </div>`;
 }
 
+function renderPinCard(pin){
+  return pin.game
+    ? cardHTML(pin.game, { pinned: true })
+    : `<div class="card placeholder">No ${escapeHTML(pin.label)} game found right now.</div>`;
+}
+
 function renderCollegeContent(sections){
-  let html = sectionLabel(sections.priorityLabel);
-  html += sections.msuGame
-    ? cardHTML(sections.msuGame, { pinned: true })
-    : `<div class="card placeholder">No ${escapeHTML(sections.priorityLabel)} game found right now.</div>`;
+  let html = "";
+  if(sections.pins.length){
+    html += sectionLabel(sections.pins.map((p) => p.label).join(" & "));
+    html += sections.pins.map(renderPinCard).join("");
+  }
 
-  html += sectionLabel("SEC games");
-  html += sections.secGames.length
-    ? sections.secGames.map((e) => cardHTML(e)).join("")
-    : `<div class="empty-state">No SEC games match.</div>`;
+  html += sectionLabel(`${sections.favConf} games`);
+  html += sections.confGames.length
+    ? sections.confGames.map((e) => cardHTML(e)).join("")
+    : `<div class="empty-state">No ${escapeHTML(sections.favConf)} games match.</div>`;
 
-  if(sections.rankedNonSec.length){
+  if(sections.rankedNonConf.length){
     html += sectionLabel("Top 25");
-    html += sections.rankedNonSec.map((e) => cardHTML(e)).join("");
+    html += sections.rankedNonConf.map((e) => cardHTML(e)).join("");
   }
   if(sections.others.length){
     html += sectionLabel("More games");
@@ -335,12 +388,12 @@ function renderCollegeContent(sections){
   return html;
 }
 
-function renderProContent(sections, conf){
-  let html = sectionLabel(conf.priorityTeams.join(" & "));
-  html += sections.pinned.length
-    ? sections.pinned.map((e) => cardHTML(e, { pinned: true })).join("")
-    : `<div class="card placeholder">No ${escapeHTML(conf.priorityTeams.join(" or "))} game today.</div>`;
-
+function renderProContent(sections){
+  let html = "";
+  if(sections.pins.length){
+    html += sectionLabel(sections.pins.map((p) => p.label).join(" & "));
+    html += sections.pins.map(renderPinCard).join("");
+  }
   if(sections.rest.length){
     html += sectionLabel("Around the league");
     html += sections.rest.map((e) => cardHTML(e)).join("");
@@ -365,8 +418,8 @@ function renderCurrentTabContent(){
   }
 
   content.innerHTML = conf.college
-    ? renderCollegeContent(buildCollegeSections(events, conf))
-    : renderProContent(buildProSections(events, conf), conf);
+    ? renderCollegeContent(buildCollegeSections(events, sportKey))
+    : renderProContent(buildProSections(events, sportKey));
 }
 
 async function renderTab(sportKey){
@@ -663,6 +716,80 @@ function stopLivePolling(){
   if(livePollTimer){ clearInterval(livePollTimer); livePollTimer = null; }
 }
 
+/* -------------------------------- settings -------------------------------- */
+
+function settingsOpen(){
+  return !document.getElementById("settings-overlay").classList.contains("hidden");
+}
+
+function teamRowInputsHTML(sportKey){
+  const label = SPORTS[sportKey].label;
+  const vals = prefs.teams[sportKey] || ["", ""];
+  return `
+    <div class="settings-section">
+      <h3>${escapeHTML(label)}</h3>
+      <div class="settings-row">
+        <input type="text" id="pref-${sportKey}-0" value="${escapeHTML(vals[0] || "")}" placeholder="Favorite team 1">
+        <input type="text" id="pref-${sportKey}-1" value="${escapeHTML(vals[1] || "")}" placeholder="Favorite team 2">
+      </div>
+    </div>
+  `;
+}
+
+function renderSettingsBody(){
+  const confOptions = Object.keys(CONFERENCES).map((name) =>
+    `<option value="${escapeHTML(name)}" ${name === prefs.conference ? "selected" : ""}>${escapeHTML(name)}</option>`
+  ).join("");
+
+  document.getElementById("settings-body").innerHTML = `
+    <h2>Favorites</h2>
+    <div class="sub">Pins these teams to the top of each tab and searches by team or conference still work as before.</div>
+
+    ${["cfb", "cbb", "cbsb", "nfl", "mlb"].map(teamRowInputsHTML).join("")}
+
+    <div class="settings-section">
+      <h3>Favorite conference</h3>
+      <div class="settings-row">
+        <select id="pref-conference">${confOptions}</select>
+      </div>
+      <div class="settings-hint">Used for the College Football / Basketball / Baseball tabs.</div>
+    </div>
+
+    <button id="settings-save" onclick="saveSettingsFromForm()">Save</button>
+    <div id="settings-saved-note"></div>
+  `;
+}
+
+function openSettings(){
+  renderSettingsBody();
+  document.getElementById("settings-overlay").classList.remove("hidden");
+}
+
+function closeSettings(){
+  document.getElementById("settings-overlay").classList.add("hidden");
+}
+
+function saveSettingsFromForm(){
+  const teams = {};
+  ["cfb", "cbb", "cbsb", "nfl", "mlb"].forEach((key) => {
+    const v0 = document.getElementById(`pref-${key}-0`).value.trim();
+    const v1 = document.getElementById(`pref-${key}-1`).value.trim();
+    teams[key] = [v0, v1];
+  });
+  const conference = document.getElementById("pref-conference").value;
+
+  prefs = { conference, teams };
+  savePrefs();
+
+  // Every cached tab derives its sections from `prefs` at render time, so
+  // no re-fetch is needed - just redraw whatever is on screen right now.
+  if(state.cache[state.currentTab]) renderCurrentTabContent();
+
+  const note = document.getElementById("settings-saved-note");
+  note.textContent = "Saved";
+  setTimeout(() => { if(note) note.textContent = ""; }, 1500);
+}
+
 /* --------------------------------- init ---------------------------------- */
 
 async function init(){
@@ -671,7 +798,7 @@ async function init(){
   }
   renderTabsBar();
   await renderTab(getDefaultTab());
-  setInterval(() => { if(!modalOpen()) fetchScoreboard(state.currentTab); }, 30000);
+  setInterval(() => { if(!modalOpen() && !settingsOpen()) fetchScoreboard(state.currentTab); }, 30000);
 }
 
 document.addEventListener("DOMContentLoaded", init);
