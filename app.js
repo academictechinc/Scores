@@ -10,7 +10,7 @@ const ESPN_BASE = "https://site.api.espn.com/apis/site/v2/sports";
 // Keep this in sync with CACHE_NAME in sw.js on every release - shown in
 // the footer so it's obvious at a glance whether a device has picked up
 // the latest version yet.
-const APP_VERSION = "v18";
+const APP_VERSION = "v19";
 
 const SPORTS = {
   cfb:  { key:"cfb",  label:"College Football",   sport:"football",  league:"college-football",        college:true,  scoreboardParams:"?groups=80&limit=400", periodMode:"week" },
