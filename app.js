@@ -36,6 +36,7 @@ const CONFERENCES = {
 const PREFS_KEY = "scores_prefs_v1";
 const DEFAULT_PREFS = {
   conference: "SEC",
+  theme: "dark",
   teams: {
     cfb: ["Mississippi State", ""],
     cbb: ["Mississippi State", ""],
@@ -52,6 +53,7 @@ function loadPrefs(){
     const parsed = JSON.parse(raw);
     return {
       conference: parsed.conference || DEFAULT_PREFS.conference,
+      theme: parsed.theme === "light" ? "light" : "dark",
       teams: Object.assign({}, DEFAULT_PREFS.teams, parsed.teams || {}),
     };
   } catch(err){
@@ -69,6 +71,27 @@ function savePrefs(){
 }
 
 let prefs = loadPrefs();
+
+/* --------------------------------- theme --------------------------------- */
+// The <head> also applies the saved theme synchronously (before first
+// paint) to avoid a flash of the wrong theme - this keeps it in sync for
+// the rest of the session and handles live toggling.
+function applyTheme(theme){
+  const root = document.documentElement;
+  if(theme === "light") root.setAttribute("data-theme", "light");
+  else root.removeAttribute("data-theme");
+  const metaTag = document.getElementById("theme-color-meta");
+  if(metaTag) metaTag.setAttribute("content", theme === "light" ? "#f4f5f7" : "#12141a");
+}
+
+function setTheme(theme){
+  prefs.theme = theme === "light" ? "light" : "dark";
+  savePrefs();
+  applyTheme(prefs.theme);
+  renderSettingsBody();
+}
+
+applyTheme(prefs.theme);
 
 const state = { currentTab: null, query: "", cache: {}, activeGame: null, period: {} };
 let livePollTimer = null;
@@ -854,6 +877,14 @@ function renderSettingsBody(){
     <h2>Favorites</h2>
     <div class="sub">Pins these teams to the top of each tab and searches by team or conference still work as before.</div>
 
+    <div class="settings-section">
+      <h3>Appearance</h3>
+      <div class="theme-toggle">
+        <button class="theme-opt ${prefs.theme !== "light" ? "active" : ""}" onclick="setTheme('dark')">Dark</button>
+        <button class="theme-opt ${prefs.theme === "light" ? "active" : ""}" onclick="setTheme('light')">Light</button>
+      </div>
+    </div>
+
     ${["cfb", "cbb", "cbsb", "nfl", "mlb"].map(teamRowInputsHTML).join("")}
 
     <div class="settings-section">
@@ -887,7 +918,7 @@ function saveSettingsFromForm(){
   });
   const conference = document.getElementById("pref-conference").value;
 
-  prefs = { conference, teams };
+  prefs = { conference, theme: prefs.theme, teams };
   savePrefs();
 
   // Every cached tab derives its sections from `prefs` at render time, so
