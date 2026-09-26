@@ -7,6 +7,11 @@
 
 const ESPN_BASE = "https://site.api.espn.com/apis/site/v2/sports";
 
+// Keep this in sync with CACHE_NAME in sw.js on every release - shown in
+// the footer so it's obvious at a glance whether a device has picked up
+// the latest version yet.
+const APP_VERSION = "v17";
+
 const SPORTS = {
   cfb:  { key:"cfb",  label:"College Football",   sport:"football",  league:"college-football",        college:true,  scoreboardParams:"?groups=80&limit=400", periodMode:"week" },
   cbb:  { key:"cbb",  label:"College Basketball",  sport:"basketball", league:"mens-college-basketball", college:true,  scoreboardParams:"?groups=50&limit=400", periodMode:"date" },
@@ -933,9 +938,25 @@ function saveSettingsFromForm(){
 /* --------------------------------- init ---------------------------------- */
 
 async function init(){
+  const versionTag = document.getElementById("app-version");
+  if(versionTag) versionTag.textContent = APP_VERSION;
+
   if("serviceWorker" in navigator){
-    navigator.serviceWorker.register("sw.js").catch((err) => console.error("SW registration failed", err));
+    navigator.serviceWorker.register("sw.js")
+      .then((reg) => reg.update())   // check for a newer sw.js on every launch, don't wait on the browser's own schedule
+      .catch((err) => console.error("SW registration failed", err));
+
+    // Once a new service worker takes over, reload once so the page picks
+    // up the fresh files it just cached - this is what lets an update
+    // apply just by reopening the app, no reinstall needed.
+    let reloadedForUpdate = false;
+    navigator.serviceWorker.addEventListener("controllerchange", () => {
+      if(reloadedForUpdate) return;
+      reloadedForUpdate = true;
+      window.location.reload();
+    });
   }
+
   renderTabsBar();
   await renderTab(getDefaultTab());
   setInterval(() => { if(!modalOpen() && !settingsOpen()) fetchScoreboard(state.currentTab); }, 30000);
