@@ -8,11 +8,11 @@
 const ESPN_BASE = "https://site.api.espn.com/apis/site/v2/sports";
 
 const SPORTS = {
-  cfb:  { key:"cfb",  label:"College Football",   sport:"football",  league:"college-football",        college:true,  scoreboardParams:"?groups=80&limit=400" },
-  cbb:  { key:"cbb",  label:"College Basketball",  sport:"basketball", league:"mens-college-basketball", college:true,  scoreboardParams:"?groups=50&limit=400" },
-  cbsb: { key:"cbsb", label:"College Baseball",    sport:"baseball",  league:"college-baseball",        college:true,  scoreboardParams:"?limit=400" },
-  nfl:  { key:"nfl",  label:"NFL",                 sport:"football",  league:"nfl",                    college:false, scoreboardParams:"" },
-  mlb:  { key:"mlb",  label:"MLB",                 sport:"baseball",  league:"mlb",                    college:false, scoreboardParams:"" },
+  cfb:  { key:"cfb",  label:"College Football",   sport:"football",  league:"college-football",        college:true,  scoreboardParams:"?groups=80&limit=400", periodMode:"week" },
+  cbb:  { key:"cbb",  label:"College Basketball",  sport:"basketball", league:"mens-college-basketball", college:true,  scoreboardParams:"?groups=50&limit=400", periodMode:"date" },
+  cbsb: { key:"cbsb", label:"College Baseball",    sport:"baseball",  league:"college-baseball",        college:true,  scoreboardParams:"?limit=400",           periodMode:"date" },
+  nfl:  { key:"nfl",  label:"NFL",                 sport:"football",  league:"nfl",                    college:false, scoreboardParams:"",                     periodMode:"week" },
+  mlb:  { key:"mlb",  label:"MLB",                 sport:"baseball",  league:"mlb",                    college:false, scoreboardParams:"",                     periodMode:"date" },
 };
 
 // Conference rosters reflect the 2024-25 realignment as best known. Used
@@ -70,7 +70,7 @@ function savePrefs(){
 
 let prefs = loadPrefs();
 
-const state = { currentTab: null, query: "", cache: {}, activeGame: null };
+const state = { currentTab: null, query: "", cache: {}, activeGame: null, period: {} };
 let livePollTimer = null;
 let searchDebounce = null;
 
@@ -87,6 +87,21 @@ function formatLocalTime(iso){
   const datePart = d.toLocaleDateString(undefined, { weekday:"short", month:"short", day:"numeric" });
   const timePart = d.toLocaleTimeString(undefined, { hour:"numeric", minute:"2-digit" });
   return `${datePart} \u00b7 ${timePart}`;
+}
+
+function pad2(n){ return String(n).padStart(2, "0"); }
+
+function dateToYYYYMMDD(d){
+  return `${d.getFullYear()}${pad2(d.getMonth()+1)}${pad2(d.getDate())}`;
+}
+
+function yyyymmddToDate(s){
+  // noon avoids the date rolling back a day from timezone rounding
+  return new Date(`${s.slice(0,4)}-${s.slice(4,6)}-${s.slice(6,8)}T12:00:00`);
+}
+
+function formatPeriodDateLabel(s){
+  return yyyymmddToDate(s).toLocaleDateString(undefined, { weekday:"short", month:"short", day:"numeric" });
 }
 
 function getConference(locationStr){
@@ -218,23 +233,61 @@ function normalizeEvent(evt, sportKey){
 
 /* ---------------------------- data fetching --------------------------- */
 
+function buildScoreboardUrl(sportKey){
+  const conf = SPORTS[sportKey];
+  const params = [];
+  if(conf.scoreboardParams) params.push(conf.scoreboardParams.replace(/^\?/, ""));
+  const p = state.period[sportKey];
+  if(p){
+    if(conf.periodMode === "week"){
+      params.push(`week=${p.week}`, `seasontype=${p.seasontype}`, `year=${p.year}`);
+    } else {
+      params.push(`dates=${p.date}`);
+    }
+  }
+  const qs = params.length ? `?${params.join("&")}` : "";
+  return `${ESPN_BASE}/${conf.sport}/${conf.league}/scoreboard${qs}`;
+}
+
+function derivePeriodFromResponse(sportKey, data){
+  const conf = SPORTS[sportKey];
+  if(conf.periodMode === "week"){
+    return {
+      week: (data.week && data.week.number) || 1,
+      year: (data.season && data.season.year) || new Date().getFullYear(),
+      seasontype: (data.season && data.season.type) || 2,
+    };
+  }
+  return { date: dateToYYYYMMDD(new Date()) };
+}
+
 async function fetchScoreboard(sportKey){
   const conf = SPORTS[sportKey];
   const content = document.getElementById("content");
   try{
-    const url = `${ESPN_BASE}/${conf.sport}/${conf.league}/scoreboard${conf.scoreboardParams || ""}`;
-    const data = await fetchJSON(url);
+    const url = buildScoreboardUrl(sportKey);
+    let data = await fetchJSON(url);
     let events = (data.events || []).map((evt) => normalizeEvent(evt, sportKey));
 
-    if(!events.length && conf.scoreboardParams){
-      // retry without the groups filter in case that id is off
+    if(!events.length && conf.scoreboardParams && !state.period[sportKey]){
+      // retry without the groups filter in case that id is off - only on the
+      // very first (un-navigated) load, so a legitimately empty past/future
+      // week doesn't get silently overwritten with "today"'s games.
       const fallbackData = await fetchJSON(`${ESPN_BASE}/${conf.sport}/${conf.league}/scoreboard`);
       events = (fallbackData.events || []).map((evt) => normalizeEvent(evt, sportKey));
+      data = fallbackData;
+    }
+
+    if(!state.period[sportKey]){
+      state.period[sportKey] = derivePeriodFromResponse(sportKey, data);
     }
 
     state.cache[sportKey] = events;
     updateTimestamp();
-    if(state.currentTab === sportKey) renderCurrentTabContent();
+    if(state.currentTab === sportKey){
+      renderCurrentTabContent();
+      renderPeriodNav();
+    }
     return events;
   } catch(err){
     console.error("Scoreboard fetch failed for", sportKey, err);
@@ -407,9 +460,10 @@ function renderCurrentTabContent(){
   const content = document.getElementById("content");
   const all = state.cache[sportKey] || [];
   const events = all.filter((e) => matchesSearch(e, state.query));
+  const periodBit = state.period[sportKey] ? ` for ${escapeHTML(periodLabel(sportKey))}` : "";
 
   if(!all.length){
-    content.innerHTML = `<div class="empty-state">No ${escapeHTML(conf.label)} games found right now.</div>`;
+    content.innerHTML = `<div class="empty-state">No ${escapeHTML(conf.label)} games found${periodBit}.</div>`;
     return;
   }
   if(!events.length && state.query){
@@ -425,12 +479,67 @@ function renderCurrentTabContent(){
 async function renderTab(sportKey){
   state.currentTab = sportKey;
   highlightActiveTab(sportKey);
+  renderPeriodNav();
   if(state.cache[sportKey]){
     renderCurrentTabContent();
   } else {
     document.getElementById("content").innerHTML = `<div class="loading-line" style="padding:20px 2px;">Loading ${escapeHTML(SPORTS[sportKey].label)}\u2026</div>`;
     await fetchScoreboard(sportKey);
   }
+}
+
+/* ------------------------------ period nav ------------------------------ */
+
+function periodLabel(sportKey){
+  const conf = SPORTS[sportKey];
+  const p = state.period[sportKey];
+  if(!p) return "";
+  if(conf.periodMode === "week"){
+    if(p.seasontype === 3) return `Postseason \u00b7 Week ${p.week}`;
+    if(p.seasontype === 1) return `Preseason \u00b7 Week ${p.week}`;
+    return `Week ${p.week}`;
+  }
+  return formatPeriodDateLabel(p.date);
+}
+
+function renderPeriodNav(){
+  const sportKey = state.currentTab;
+  const nav = document.getElementById("period-nav");
+  if(!nav) return;
+  const label = state.period[sportKey] ? periodLabel(sportKey) : "\u2026";
+  nav.innerHTML = `
+    <button class="period-btn" onclick="shiftPeriod('${sportKey}',-1)" aria-label="Previous">&lsaquo;</button>
+    <span class="period-label">${escapeHTML(label)}</span>
+    <button class="period-btn" onclick="shiftPeriod('${sportKey}',1)" aria-label="Next">&rsaquo;</button>
+    <button class="period-now" onclick="resetPeriodToNow('${sportKey}')">Now</button>
+  `;
+}
+
+function loadPeriod(sportKey){
+  document.getElementById("content").innerHTML = `<div class="loading-line" style="padding:20px 2px;">Loading\u2026</div>`;
+  renderPeriodNav();
+  fetchScoreboard(sportKey);
+}
+
+function shiftPeriod(sportKey, delta){
+  const conf = SPORTS[sportKey];
+  const p = state.period[sportKey];
+  if(!p) return;
+  if(conf.periodMode === "week"){
+    p.week = Math.max(1, p.week + delta);
+  } else {
+    const d = yyyymmddToDate(p.date);
+    d.setDate(d.getDate() + delta);
+    p.date = dateToYYYYMMDD(d);
+  }
+  delete state.cache[sportKey];
+  loadPeriod(sportKey);
+}
+
+function resetPeriodToNow(sportKey){
+  state.period[sportKey] = null;
+  delete state.cache[sportKey];
+  loadPeriod(sportKey);
 }
 
 /* -------------------------------- tabs --------------------------------- */
